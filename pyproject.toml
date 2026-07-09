@@ -1,0 +1,14 @@
+[project]
+name = "vani-sbi-backend"
+version = "0.1.0"
+description = "LiveKit web-call token API + Sarvam/OpenAI voice agent"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "livekit-api>=1.0",
+    "livekit-agents[sarvam,openai]~=1.5",
+    "httpx>=0.27",
+    "python-dotenv>=1.0",
+]
