@@ -11,4 +11,5 @@ dependencies = [
     "livekit-agents[sarvam,openai]~=1.5",
     "httpx>=0.27",
     "python-dotenv>=1.0",
+    "granian>=2.7.9",
 ]

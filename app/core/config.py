@@ -12,5 +12,5 @@ LIVEKIT_API_SECRET = os.environ["LIVEKIT_API_SECRET"]
 
 USER_API_URL = os.getenv("USER_API_URL")  # optional; id lookups skipped if unset
 
-AGENT_DISPATCH_NAME = "voice-agent"  # must match app/agent.py rtc_session(agent_name=...)
+AGENT_DISPATCH_NAME = "voice-agent"  # must match app/agent/worker.py rtc_session(agent_name=...)
 TOKEN_TTL_SECONDS = 60 * 30

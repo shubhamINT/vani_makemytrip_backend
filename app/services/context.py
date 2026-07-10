@@ -4,7 +4,7 @@ import logging
 
 import httpx
 
-from app.config import USER_API_URL
+from app.core.config import USER_API_URL
 
 logger = logging.getLogger("context")
 

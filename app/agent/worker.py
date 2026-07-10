@@ -9,26 +9,13 @@ Run: uv run python -m app.agent dev
 import json
 import logging
 
-from livekit.agents import Agent, AgentServer, AgentSession, JobContext, cli
+from livekit.agents import Agent, AgentServer, AgentSession, JobContext
 from livekit.plugins import openai, sarvam
 
-from app.config import AGENT_DISPATCH_NAME
+from app.agent.instructions import build_instructions
+from app.core.config import AGENT_DISPATCH_NAME
 
 logger = logging.getLogger("agent")
-
-
-def build_instructions(agent_name: str, user: dict | None) -> str:
-    """Persona instructions, enriched with fetched user context when present."""
-    base = (
-        f"You are {agent_name}, a helpful voice assistant for SBI. "
-        "Speak naturally and concisely. Answer in the user's language."
-    )
-    if user:
-        base += f"\n\nYou are speaking with a known customer. Their details:\n{json.dumps(user, ensure_ascii=False)}"
-    else:
-        base += "\n\nThe caller is not identified. Do not assume any account details."
-    return base
-
 
 server = AgentServer()
 
@@ -55,7 +42,3 @@ async def entrypoint(ctx: JobContext) -> None:
     )
     await session.start(room=ctx.room, agent=Agent(instructions=build_instructions(agent_name, user)))
     await session.generate_reply(instructions="Greet the user and offer help.")
-
-
-if __name__ == "__main__":
-    cli.run_app(server)

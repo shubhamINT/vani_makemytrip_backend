@@ -1,6 +1,6 @@
 """Run: uv run python -m tests.test_instructions"""
 
-from app.agent import build_instructions
+from app.agent.instructions import build_instructions
 
 
 def test_build_instructions():
