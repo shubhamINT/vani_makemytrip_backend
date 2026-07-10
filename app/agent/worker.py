@@ -8,7 +8,6 @@ Run: uv run python -m app.agent dev
 
 import json
 import logging
-from typing import Any
 
 from livekit.agents import (
     Agent,
@@ -31,7 +30,8 @@ logger = logging.getLogger("agent")
 server = AgentServer()
 
 # Topic for custom structured UI payloads pushed to the frontend. The frontend
-# registers a text-stream handler for this topic and renders by payload["type"].
+# registers a text-stream handler for this topic and renders the openui-lang
+# content using OpenUI's <Renderer> component.
 # Kept off the reserved "lk.transcription" topic so the live transcript is
 # unaffected.
 UI_TOPIC = "ui.render"
@@ -47,9 +47,9 @@ STT_PROMPT = (
 )
 
 
-async def send_ui(room, payload: dict[str, Any], topic: str = UI_TOPIC) -> None:
-    """Push a JSON payload to the frontend on a custom text-stream topic."""
-    await room.local_participant.send_text(json.dumps(payload), topic=topic)
+async def send_ui_text(room, text: str, topic: str = UI_TOPIC) -> None:
+    """Push raw openui-lang text to the frontend on a custom topic."""
+    await room.local_participant.send_text(text, topic=topic)
 
 
 class SBIAgent(Agent):
@@ -57,26 +57,23 @@ class SBIAgent(Agent):
         super().__init__(instructions=instructions)
 
     @function_tool()
-    async def show_details(
+    async def render_ui(
         self,
         context: RunContext,
-        title: str,
-        rows: list[dict[str, str]],
+        openui_lang: str,
     ) -> str:
-        """Display structured details to the user on screen as a table.
+        """Display rich visual content on the user's screen using openui-lang.
 
         Use when the user asks to see data best shown visually (account
-        summary, transactions, charges, comparisons) rather than read aloud.
+        summaries, transactions, comparisons, spending charts, statements,
+        step-by-step guides) rather than read aloud.
 
         Args:
-            title: A short heading for the table.
-            rows: List of {"label": ..., "value": ...} objects to show.
+            openui_lang: The openui-lang code describing the UI to render.
+                Must start with a `root = Card(...)` statement.
         """
-        await send_ui(
-            context.session.room,
-            {"type": "table", "title": title, "rows": rows},
-        )
-        return f"Showing '{title}' on screen. Briefly tell the user to check the display."
+        await send_ui_text(context.session.room, openui_lang)
+        return "Showing UI on screen. Briefly tell the user to check the display."
 
 
 @server.rtc_session(agent_name=AGENT_DISPATCH_NAME)
