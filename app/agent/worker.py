@@ -72,7 +72,7 @@ class SBIAgent(Agent):
             openui_lang: The openui-lang code describing the UI to render.
                 Must start with a `root = Card(...)` statement.
         """
-        await send_ui_text(context.session.room, openui_lang)
+        await send_ui_text(context.session.room_io.room, openui_lang)
         return "Showing UI on screen. Briefly tell the user to check the display."
 
 
