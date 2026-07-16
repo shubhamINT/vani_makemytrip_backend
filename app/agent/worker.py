@@ -40,10 +40,10 @@ UI_TOPIC = "ui.render"
 # recognizer toward banking vocabulary and preserves proper nouns. Transcribes
 # the CALLER's speech.
 STT_PROMPT = (
-    "A caller is talking to the voice assistant of SBI (State Bank of India). "
-    "The caller speaks English, Hindi, or Bengali and often mixes them "
-    "(Hinglish, Banglish). Recognize and preserve banking terms, account "
-    "numbers, and product names accurately."
+    "A caller is talking to MakeMyTrip's voice travel assistant. The caller "
+    "speaks English, Hindi, or Bengali and often mixes them (Hinglish, "
+    "Banglish). Recognize and preserve city names, airport codes, airline and "
+    "hotel names, dates, and PNRs accurately."
 )
 
 
@@ -52,7 +52,7 @@ async def send_ui_text(room, text: str, topic: str = UI_TOPIC) -> None:
     await room.local_participant.send_text(text, topic=topic)
 
 
-class SBIAgent(Agent):
+class TravelAgent(Agent):
     def __init__(self, instructions: str) -> None:
         super().__init__(instructions=instructions)
 
@@ -64,9 +64,9 @@ class SBIAgent(Agent):
     ) -> str:
         """Display rich visual content on the user's screen using openui-lang.
 
-        Use when the user asks to see data best shown visually (account
-        summaries, transactions, comparisons, spending charts, statements,
-        step-by-step guides) rather than read aloud.
+        Use when results are best shown visually (flight/hotel search results,
+        booking confirmations and e-tickets, trip itineraries, comparisons)
+        rather than read aloud.
 
         Args:
             openui_lang: The openui-lang code describing the UI to render.
@@ -129,7 +129,7 @@ async def entrypoint(ctx: JobContext) -> None:
 
     await session.start(
         room=ctx.room,
-        agent=SBIAgent(instructions=build_instructions(agent_name, user)),
+        agent=TravelAgent(instructions=build_instructions(agent_name, user)),
         room_options=room_io.RoomOptions(
             text_input=True,
             audio_input=True,
