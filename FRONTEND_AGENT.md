@@ -11,7 +11,7 @@ This describes the app as built in `src/app/`.
 3. connect to LiveKit   → using {url, token}
 4. send buffered ask    → on connect, the first message is sent
 5. converse             → voice + text; agent greets, answers
-6. agent shows results  → openui-lang on topic "ui.render" → OpenUI <Renderer> parses + renders
+6. agent shows results  → openui-lang STREAMED on topic "ui.render" → <Renderer> builds live
 7. user books           → "Book" button → action sent back to the agent as a chat message
 ```
 
@@ -43,23 +43,43 @@ The feed has exactly two entry kinds (`Conversation.tsx`, the `Entry` union):
 
 - **`message`** — plain text (typed or transcribed). Renders as a light chat bubble
   (user right, agent left). No card chrome.
-- **`ui-render`** — raw openui-lang streamed on `ui.render`. Renders as a full-width
+- **`ui-render`** — openui-lang streamed on `ui.render`. Renders as a full-width
   **boarding-pass result panel** (labeled "Trip results", collapsible/dismissible)
-  via `<Renderer library={openuiChatLibrary}>`.
+  via `<Renderer library={openuiChatLibrary}>`. One entry per stream (keyed by
+  stream id), updated in place as chunks arrive.
 
 This split is the mechanism that stops "hi / hello" from looking like a hotel card.
 Do not merge the two.
 
-## 4. Rendering results — topic `ui.render`
+## 4. Rendering results — topic `ui.render` (STREAMED)
+
+The agent writes openui-lang line-by-line as a dedicated LLM generates it. Read
+incrementally and re-render each chunk — do NOT `reader.readAll()` (that blocks
+until the stream ends and kills the live build).
 
 ```tsx
 room.registerTextStreamHandler("ui.render", async (reader) => {
-  const text = await reader.readAll();   // raw openui-lang
-  // → becomes a ui-render entry, rendered by <Renderer response={text} library={openuiChatLibrary} />
+  let text = "";
+  for await (const chunk of reader) {           // openui-lang is streaming-first
+    text += chunk;
+    upsertUiRenderEntry(reader.info.id, text, true);   // isStreaming
+  }
+  upsertUiRenderEntry(reader.info.id, text, false);    // stream closed
 });
 ```
-No custom render functions needed — `openuiChatLibrary` covers cards, tables, charts,
-images, carousels, lists, callouts, steps, forms, buttons, follow-ups, etc.
+
+`upsertUiRenderEntry(id, text, isStreaming)` updates the entry in place (keyed by
+`reader.info.id`) and passes `isStreaming` through:
+
+```tsx
+<Renderer response={text} library={openuiChatLibrary} isStreaming={isStreaming} />
+```
+
+While `isStreaming` is true, unresolved forward-refs / partial statements are
+expected — `<Renderer>` builds progressively. On stream close it flips false so
+final parse errors surface. No custom render functions needed — `openuiChatLibrary`
+covers cards, tables, charts, images, carousels, lists, callouts, steps, forms,
+buttons, follow-ups, etc.
 
 ## 5. Booking round-trip — `onAction`
 

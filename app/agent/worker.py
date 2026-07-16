@@ -23,6 +23,7 @@ from livekit.agents import (
 from livekit.plugins import openai, sarvam
 
 from app.agent.instructions import build_instructions
+from app.agent.openui_render import stream_openui
 from app.core.config import AGENT_DISPATCH_NAME
 
 logger = logging.getLogger("agent")
@@ -47,9 +48,16 @@ STT_PROMPT = (
 )
 
 
-async def send_ui_text(room, text: str, topic: str = UI_TOPIC) -> None:
-    """Push raw openui-lang text to the frontend on a custom topic."""
-    await room.local_participant.send_text(text, topic=topic)
+async def stream_ui_text(room, chunks, topic: str = UI_TOPIC) -> None:
+    """Stream openui-lang chunks to the frontend on a custom topic.
+
+    The frontend's <Renderer> consumes the stream incrementally and builds the
+    UI live as statements arrive.
+    """
+    writer = await room.local_participant.stream_text(topic=topic)
+    async for chunk in chunks:
+        await writer.write(chunk)
+    await writer.aclose()
 
 
 class TravelAgent(Agent):
@@ -60,19 +68,27 @@ class TravelAgent(Agent):
     async def render_ui(
         self,
         context: RunContext,
-        openui_lang: str,
+        request: str,
     ) -> str:
-        """Display rich visual content on the user's screen using openui-lang.
+        """Display rich visual content on the user's screen.
 
         Use when results are best shown visually (flight/hotel search results,
         booking confirmations and e-tickets, trip itineraries, comparisons)
-        rather than read aloud.
+        rather than read aloud. A dedicated UI author turns your description
+        into the visual — you do not write any markup.
 
         Args:
-            openui_lang: The openui-lang code describing the UI to render.
-                Must start with a `root = Card(...)` statement.
+            request: A complete natural-language description of what to show,
+                INCLUDING every concrete data point (airline names, times,
+                prices, hotel names, PNR, seat, e-ticket/checkout URLs). For
+                booking buttons, say what each button should do (e.g. "a Book
+                button for IndiGo 6E-231 at 06:10"). Be exhaustive — the author
+                only has what you write here.
         """
-        await send_ui_text(context.session.room_io.room, openui_lang)
+        await stream_ui_text(
+            context.session.room_io.room,
+            stream_openui(request),
+        )
         return "Showing UI on screen. Briefly tell the user to check the display."
 
 

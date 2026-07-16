@@ -14,3 +14,6 @@ USER_API_URL = os.getenv("USER_API_URL")  # optional; id lookups skipped if unse
 
 AGENT_DISPATCH_NAME = "voice-agent"  # must match app/agent/worker.py rtc_session(agent_name=...)
 TOKEN_TTL_SECONDS = 60 * 30
+
+# Model for the dedicated OpenUI-Lang render call (separate from the voice LLM).
+OPENUI_RENDER_MODEL = os.getenv("OPENUI_RENDER_MODEL", "gpt-5.4-mini")
