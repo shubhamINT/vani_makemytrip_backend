@@ -9,16 +9,20 @@ from collections.abc import AsyncIterator
 
 from openai import AsyncOpenAI
 
+from app.agent.makemytrip_ui import MAKEMYTRIP_UI_GUIDE
 from app.agent.openui_prompt import OPENUI_SYSTEM_PROMPT
 from app.core.config import OPENUI_RENDER_MODEL
 
 _client = AsyncOpenAI()  # reads OPENAI_API_KEY
 
+# Standard OpenUI-Lang (syntax + components) + MakeMyTrip render recipes.
 _SYSTEM = (
     OPENUI_SYSTEM_PROMPT
-    + "\n\nYou are the UI author. Turn the request below into OpenUI-Lang. "
-    "Output ONLY raw OpenUI-Lang starting with `root = Card(`. No markdown "
-    "fences, no prose, no explanation."
+    + "\n\n"
+    + MAKEMYTRIP_UI_GUIDE
+    + "\n\nYou are the UI author. Turn the request below into OpenUI-Lang using "
+    "the MakeMyTrip recipes above. Output ONLY raw OpenUI-Lang starting with "
+    "`root = Card(`. No markdown fences, no prose, no explanation."
 )
 
 

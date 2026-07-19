@@ -40,6 +40,17 @@ Response (envelope; flat `{token,url}` also accepted):
 | both | `lk.transcription` | reserved | live captions (LiveKit-managed, do not write) |
 | user → agent | `lk.chat` | text | typed messages **and booking actions** (see §4) |
 | agent → user | `ui.render` | raw openui-lang text | a result panel to display |
+| agent → user | `trip.summary` | JSON | pins the trip summary card in the side panel |
+
+`ui.render` streams carry two **attributes** the dashboard uses:
+- `tab` — one of `overview / hotels / flights / experiences / food / itinerary / budget / visa` (which dashboard tab to file the render under; untagged → overview).
+- `title` — a short heading shown above the render (e.g. `"Hotels in Kolkata"`).
+
+`trip.summary` is a single JSON blob, streamed whenever the trip's shape is known
+or changes: `{ "destination", "dates", "duration", "travelers", "budget" }` — all
+short strings. `destination` should be a clean place name; the frontend fetches live
+weather for it (Open-Meteo). Example:
+`{"destination":"Kolkata","dates":"24–26 May 2025","duration":"2 nights / 3 days","travelers":"2 adults","budget":"₹28,000 – ₹32,000"}`
 
 Rules:
 - Greet first with a short spoken line.
@@ -54,6 +65,26 @@ Rules:
 
 Line-oriented, assignment-based. `root` must be a `Card`. Positional args, one
 statement per line. Below are the core travel patterns — copy the shapes.
+
+> **Making it premium.** The frontend now themes `openuiChatLibrary` with the MakeMyTrip
+> brand (coral accent, Bricolage/Inter fonts, on-brand chart palette). To match that polish,
+> the agent should:
+> - **Generate the system prompt, don't hand-write it.** Build render instructions from
+>   `openuiChatLibrary.prompt(openuiChatPromptOptions)` so signatures stay valid and current.
+> - **Validate every render before streaming.** Run
+>   `createParser(openuiChatLibrary.toJSONSchema(), "Card").parse(src)`, check
+>   `result.meta.errors`, and feed any errors back to the model to self-correct. Never stream
+>   unparsed lang.
+> - **Use real image URLs** from the search/tool results (never placeholders) — `Image`/`Carousel`
+>   cards carry the premium look.
+> - **Reach for richer components:** `TagBlock` for amenities/fare classes, `Callout("success", …)`
+>   for confirmations, `Steps` for itineraries, `SectionBlock` for grouped detail.
+> - **End every result with a `FollowUpBlock`** so the conversation keeps moving.
+> - **Make everything actionable:** each item gets a `Button` with a self-sufficient
+>   `@ToAssistant(...)` string; payment / e-tickets use `@OpenUrl(...)`.
+> - **Layout:** results stack full-width, so tables and carousels render fine — but keep each
+>   `Card` to one clear job and prefer a `Carousel` over wide multi-column grids.
+> - **Charts** (`LineChart`/`BarChart` for price trends) inherit the on-brand palette automatically.
 
 ### Hotel results (carousel of cards with images, tags, price, Book)
 ```text

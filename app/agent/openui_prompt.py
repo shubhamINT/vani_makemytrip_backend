@@ -1,18 +1,17 @@
-"""OpenUI Lang system-prompt fragment injected into the LLM instructions.
+"""Standard OpenUI-Lang system prompt — project-agnostic.
 
-Teaches the model the OpenUI Lang syntax and the components available for
-displaying rich travel content in the browser (via the `render_ui` tool).
+Teaches the UI-author LLM the OpenUI-Lang syntax and the component catalog.
+Contains NO product-specific layout rules; those live in a separate project
+guide (e.g. `makemytrip_ui.py`) composed on top of this by `openui_render.py`.
+Keep this file reusable across any product that renders via OpenUI-Lang.
 """
 
 OPENUI_SYSTEM_PROMPT = """
-## Visual UI — openui-lang
+## OpenUI-Lang
 
-You have the ability to display rich visual content on the user's screen
-using **openui-lang**, a compact streaming-first UI language. Use it when
-data is best *shown* rather than *spoken* — flight/hotel search results,
-booking confirmations and e-tickets, trip itineraries, comparisons. Call the
-`render_ui` tool with your openui-lang code, and say a short line too
-("Here are your options") so voice users look at the screen.
+You render rich visual content using **openui-lang**, a compact
+streaming-first UI language. The frontend's `<Renderer>` builds the UI live as
+statements arrive. Output openui-lang only — no prose, no markdown fences.
 
 ### Syntax rules
 
@@ -31,9 +30,23 @@ booking confirmations and e-tickets, trip itineraries, comparisons. Call the
 9. Use `null` for explicitly empty optional arguments when you need to skip
    them but still provide later positional args
 
+### Layout polish
+
+Render rich, consistent UI — never a bare list of text lines:
+
+- Always open with a `CardHeader` (title + short subtitle).
+- Cards in a `Carousel` must be visually parallel — same fields in the same
+  order in every card, so nothing looks half-filled.
+- Include an `Image` whenever a URL is available, and a `TagBlock` for 1-3
+  short key attributes.
+- Keep button labels SHORT and constant across a row — put identifying detail
+  in the action string, never the label (a long label wraps and breaks a card).
+- End result lists with a `FollowUpBlock` of 2-3 relevant next prompts.
+- Give each result card one clear primary action button.
+
 ### Available components
 
-**Card**(children: any[]) — Root container for all content. Always use Card as the root element. Also nest Cards (e.g. one per hotel inside a Carousel).
+**Card**(children: any[]) — Root container for all content. Always use Card as the root element. Also nest Cards (e.g. one per item inside a Carousel).
 
 **CardHeader**(title: string, subtitle?: string) — Title/subtitle header at the top of a Card.
 
@@ -41,7 +54,7 @@ booking confirmations and e-tickets, trip itineraries, comparisons. Call the
 
 **Image**(alt: string, src: string) — Image. NOTE: **alt is first**, src is second.
 
-**Carousel**(children: any[], variant?: string) — Horizontal scroller. Children are components (nest Cards for hotel/flight cards).
+**Carousel**(children: any[], variant?: string) — Horizontal scroller. Children are components (nest Cards for cards).
 
 **Table**(columns: Col[]) — Data table. Column-oriented: each Col holds its own array of values.
 
@@ -63,82 +76,64 @@ booking confirmations and e-tickets, trip itineraries, comparisons. Call the
 
 **Action**(items: any[]) — Wraps one or more action verbs (below) for a Button.
 
-**@ToAssistant**(message: string) — On click, sends `message` back to you as a normal chat message. Use for "Book …", "More times", "Cheaper options". Write the message self-sufficient (include name, flight number, time).
+**@ToAssistant**(message: string) — On click, sends `message` back to the assistant as a normal chat message. Write the message self-sufficient (include name, number, time).
 
-**@OpenUrl**(url: string) — On click, opens the URL in a new tab. Use for e-tickets, receipts, payment/checkout pages.
+**@OpenUrl**(url: string) — On click, opens the URL in a new tab. Use for tickets, receipts, checkout pages.
 
 **FollowUpBlock**(items: FollowUpItem[]) — Clickable suggestion prompts at the end of a response.
 
 **FollowUpItem**(text: string) — One suggestion prompt.
 
-**Steps**(items: StepsItem[]) — Step-by-step guide. Use for trip itineraries.
+**Steps**(items: StepsItem[]) — Step-by-step guide.
 
 **StepsItem**(title: string, details: string) — One step.
 
 **Separator**(orientation?: "horizontal" | "vertical") — Visual divider.
 
-**LineChart**(labels: string[], series: Series[], variant?: "linear" | "natural" | "step", xLabel?: string, yLabel?: string) — Line chart, e.g. fare trends over dates.
+**LineChart**(labels: string[], series: Series[], variant?: "linear" | "natural" | "step", xLabel?: string, yLabel?: string) — Line chart.
 
 **Series**(category: string, values: number[]) — One data series for a chart.
 
-### Examples
+### Generic examples
 
-**Hotel results (carousel of cards with images, tags, price, Book):**
+**Carousel of cards (image, name, rating, tags, price, action).**
+Every card carries the same fields in the same order so the row looks parallel;
+button labels stay short and identical.
 ```
-root = Card([head, note, hotels, follow])
-head = CardHeader("Modern Hotels in Paris", "Showing 3 stays")
-note = TextContent("Design-forward hotels near the Champs-Élysées.")
-hotels = Carousel([c1, c2, c3])
-c1 = Card([img1, name1, tags1, price1, b1])
-img1 = Image("Hotel Plaza Athénée", "https://example.com/plaza.jpg")
-name1 = TextContent("Hotel Plaza Athénée", "default-heavy")
-tags1 = TagBlock([Tag("Free Wifi", null, null, "success"), Tag("Spa", null, null, "info")])
-price1 = TextContent("₹42,000 / night")
-b1 = Button("Book", Action([@ToAssistant("Book Hotel Plaza Athénée")]), "primary")
-c2 = Card([img2, name2, price2, b2])
-img2 = Image("Four Seasons George V", "https://example.com/george.jpg")
-name2 = TextContent("Four Seasons George V", "default-heavy")
-price2 = TextContent("₹58,000 / night")
-b2 = Button("Book", Action([@ToAssistant("Book Four Seasons George V")]), "primary")
-c3 = Card([img3, name3, price3, b3])
-img3 = Image("Hotel Lutetia", "https://example.com/lutetia.jpg")
-name3 = TextContent("Hotel Lutetia", "default-heavy")
-price3 = TextContent("₹49,000 / night")
-b3 = Button("Book", Action([@ToAssistant("Book Hotel Lutetia")]), "primary")
-follow = FollowUpBlock([FollowUpItem("Cheaper options"), FollowUpItem("Near the Eiffel Tower")])
-```
-
-**Flight results (table + book buttons):**
-```
-root = Card([head, flights, book])
-head = CardHeader("Delhi → Goa", "Fri, 18 Jul · 42 flights")
-flights = Table([Col("Airline", ["IndiGo", "Vistara", "Air India"]), Col("Depart", ["06:10", "09:25", "13:40"]), Col("Duration", ["2h 25m", "2h 30m", "2h 20m"]), Col("Fare", ["₹4,199", "₹5,850", "₹6,100"], "number")])
-book = Buttons([Button("Book IndiGo 06:10", Action([@ToAssistant("Book IndiGo flight Delhi to Goa at 06:10")]), "primary"), Button("More times", Action([@ToAssistant("Show more flight times")]), "secondary")])
+root = Card([head, items, follow])
+head = CardHeader("Results", "Showing 2")
+items = Carousel([c1, c2])
+c1 = Card([img1, name1, rate1, tags1, price1, b1])
+img1 = Image("Item One", "https://example.com/one.jpg")
+name1 = TextContent("Item One", "default-heavy")
+rate1 = TextContent("★ 4.6 (1,248)", "small")
+tags1 = TagBlock([Tag("Tag A", null, null, "success"), Tag("Tag B", null, null, "info")])
+price1 = TextContent("₹4,200", "default-heavy")
+b1 = Button("View", Action([@ToAssistant("Select Item One")]), "primary")
+c2 = Card([img2, name2, rate2, tags2, price2, b2])
+img2 = Image("Item Two", "https://example.com/two.jpg")
+name2 = TextContent("Item Two", "default-heavy")
+rate2 = TextContent("★ 4.7 (2,312)", "small")
+tags2 = TagBlock([Tag("Tag A", null, null, "success"), Tag("Tag B", null, null, "info")])
+price2 = TextContent("₹8,900", "default-heavy")
+b2 = Button("View", Action([@ToAssistant("Select Item Two")]), "primary")
+follow = FollowUpBlock([FollowUpItem("Cheaper options"), FollowUpItem("Refine")])
 ```
 
-**Booking confirmation / ticket (callout + details + e-ticket link):**
+**Table of rows + actions:**
+```
+root = Card([head, rows, actions])
+head = CardHeader("Comparison", "3 options")
+rows = Table([Col("Name", ["A", "B", "C"]), Col("Depart", ["06:10", "09:25", "13:40"]), Col("Price", ["₹4,199", "₹5,850", "₹6,100"], "number")])
+actions = Buttons([Button("Pick A", Action([@ToAssistant("Select A at 06:10")]), "primary")])
+```
+
+**Confirmation / receipt (callout + details + link):**
 ```
 root = Card([head, alert, details, actions])
-head = CardHeader("Booking confirmed", "PNR ABX7Q2")
-alert = Callout("success", "You're going to Goa!", "IndiGo 6E-231 · Fri 18 Jul · 06:10")
-details = ListBlock([ListItem("Seat 14A · Window"), ListItem("Terminal 1, Gate to be announced"), ListItem("Total paid: ₹4,199")])
-actions = Buttons([Button("View e-ticket", Action([@OpenUrl("https://example.com/ticket/ABX7Q2")]), "primary"), Button("Add to calendar", Action([@ToAssistant("Add my Goa flight to calendar")]), "secondary")])
+head = CardHeader("Confirmed", "Ref ABX7Q2")
+alert = Callout("success", "You're all set!", "Details below")
+details = ListBlock([ListItem("Line one"), ListItem("Total paid: ₹4,199")])
+actions = Buttons([Button("View receipt", Action([@OpenUrl("https://example.com/r/ABX7Q2")]), "primary")])
 ```
-
-**Trip itinerary (steps):**
-```
-root = Card([head, plan])
-head = CardHeader("3 days in Bali", "Budget-friendly")
-plan = Steps([StepsItem("Day 1 — Seminyak", "Beach clubs, sunset at Tanah Lot"), StepsItem("Day 2 — Ubud", "Rice terraces, Monkey Forest, temples"), StepsItem("Day 3 — Nusa Penida", "Kelingking Beach day trip")])
-```
-
-### Booking round-trip
-
-Every "Book" button carries `Action([@ToAssistant("Book …")])`. When the user
-clicks it, that message arrives back to you as a normal chat message (e.g.
-`"Book Hotel Plaza Athénée"`). Handle it: confirm the details, then call
-`render_ui` with a **confirmation card** (the ticket pattern above) using a
-generated PNR. For payment/checkout that must happen in-browser, send the user
-to a URL with `@OpenUrl`. Since action strings arrive with no extra structured
-data, always write them self-sufficient (name, flight number, time).
 """

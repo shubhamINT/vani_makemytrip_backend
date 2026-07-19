@@ -8,6 +8,7 @@ Run: uv run python -m app.agent dev
 
 import json
 import logging
+from typing import Literal
 
 from livekit.agents import (
     Agent,
@@ -48,13 +49,16 @@ STT_PROMPT = (
 )
 
 
-async def stream_ui_text(room, chunks, topic: str = UI_TOPIC) -> None:
+async def stream_ui_text(
+    room, chunks, topic: str = UI_TOPIC, attributes: dict[str, str] | None = None
+) -> None:
     """Stream openui-lang chunks to the frontend on a custom topic.
 
     The frontend's <Renderer> consumes the stream incrementally and builds the
-    UI live as statements arrive.
+    UI live as statements arrive. `attributes` (e.g. tab, title) ride along on
+    the stream info so the dashboard can file each render under the right tab.
     """
-    writer = await room.local_participant.stream_text(topic=topic)
+    writer = await room.local_participant.stream_text(topic=topic, attributes=attributes)
     async for chunk in chunks:
         await writer.write(chunk)
     await writer.aclose()
@@ -69,6 +73,17 @@ class TravelAgent(Agent):
         self,
         context: RunContext,
         request: str,
+        tab: Literal[
+            "overview",
+            "hotels",
+            "flights",
+            "experiences",
+            "food",
+            "itinerary",
+            "budget",
+            "visa",
+        ],
+        title: str,
     ) -> str:
         """Display rich visual content on the user's screen.
 
@@ -84,12 +99,62 @@ class TravelAgent(Agent):
                 booking buttons, say what each button should do (e.g. "a Book
                 button for IndiGo 6E-231 at 06:10"). Be exhaustive — the author
                 only has what you write here.
+            tab: Which dashboard tab this render belongs under. Pick the closest:
+                "hotels" for stays, "flights" for flight lists/bookings,
+                "experiences" for activities/tours, "food" for restaurants,
+                "itinerary" for day-by-day plans, "budget" for cost breakdowns,
+                "visa" for visa/entry info, "overview" for anything else or a
+                trip summary.
+            title: Short human label for the panel, e.g. "Hotels in Kolkata" or
+                "Delhi → Goa flights". Shown above the render.
         """
         await stream_ui_text(
             context.session.room_io.room,
             stream_openui(request),
+            attributes={"tab": tab, "title": title},
         )
-        return "Showing UI on screen. Briefly tell the user to check the display."
+        return "Shown on screen. Say one short line only — do not read it aloud."
+
+    @function_tool()
+    async def set_trip_summary(
+        self,
+        context: RunContext,
+        destination: str,
+        dates: str,
+        duration: str,
+        travelers: str,
+        budget: str,
+    ) -> str:
+        """Pin or update the trip summary card in the user's side panel.
+
+        Call this as soon as you know the trip's shape, and again whenever any
+        detail changes. The panel also shows live weather for `destination`, so
+        keep it a clean city/place name (e.g. "Kolkata"). Use short human values.
+
+        Args:
+            destination: City or place, e.g. "Kolkata".
+            dates: Travel dates, e.g. "24–26 May 2025" (or "Next weekend").
+            duration: e.g. "2 nights / 3 days".
+            travelers: e.g. "2 adults".
+            budget: Estimated budget range, e.g. "₹28,000 – ₹32,000".
+        """
+        payload = json.dumps(
+            {
+                "destination": destination,
+                "dates": dates,
+                "duration": duration,
+                "travelers": travelers,
+                "budget": budget,
+            }
+        )
+
+        async def _one():
+            yield payload
+
+        await stream_ui_text(
+            context.session.room_io.room, _one(), topic="trip.summary"
+        )
+        return "Trip summary updated on screen."
 
 
 @server.rtc_session(agent_name=AGENT_DISPATCH_NAME)
@@ -154,4 +219,6 @@ async def entrypoint(ctx: JobContext) -> None:
             delete_room_on_close=True,
         ),
     )
-    await session.generate_reply(instructions="Greet the user and offer help.")
+    await session.generate_reply(
+        instructions="Greet in one short sentence and ask what trip they want."
+    )
