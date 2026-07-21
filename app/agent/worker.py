@@ -6,6 +6,7 @@ Persona + optional user context arrive via the dispatch job metadata (JSON).
 Run: uv run python -m app.agent dev
 """
 
+import hashlib
 import json
 import logging
 from typing import Literal
@@ -23,6 +24,8 @@ from livekit.agents import (
 )
 from livekit.plugins import openai, sarvam
 
+from app.agent import openui_build as ob
+from app.agent import travel_data as td
 from app.agent.instructions import build_instructions
 from app.agent.openui_render import stream_openui
 from app.agent.travel_data import flights_for, hero_for, hotels_for
@@ -46,6 +49,10 @@ UI_TOPIC = "ui.render"
 HERO_TOPIC = "trip.hero"
 HOTELS_TOPIC = "hotels.list"
 FLIGHTS_TOPIC = "flights.list"
+EXPERIENCES_TOPIC = "experiences.list"
+FOOD_TOPIC = "food.list"
+DETAIL_TOPIC = "detail.view"
+BOOKING_TOPIC = "booking.confirmation"
 
 # Sarvam STT `prompt` (saaras:v3): domain-specific hint that biases the
 # recognizer toward banking vocabulary and preserves proper nouns. Transcribes
@@ -80,6 +87,30 @@ async def publish_json(room, topic: str, payload: dict) -> None:
         yield json.dumps(payload, ensure_ascii=False)
 
     await stream_ui_text(room, _one(), topic=topic)
+
+
+async def publish_lang(room, lang: str, tab: str) -> None:
+    """Stream a full openui-lang string on ui.render, filed under `tab`.
+
+    title="" so the frontend shows no extra <h2> — the lang's own CardHeader is
+    the panel heading (avoids the doubled-header bug).
+    """
+
+    async def _one():
+        yield lang
+
+    await stream_ui_text(room, _one(), attributes={"tab": tab, "title": ""})
+
+
+def _pnr(seed: str) -> str:
+    """Stable, PNR-looking 6-char code from a seed (deterministic per booking)."""
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ0123456789"
+    n = int(hashlib.md5(seed.encode()).hexdigest(), 16)
+    out = ""
+    for _ in range(6):
+        out += alphabet[n % len(alphabet)]
+        n //= len(alphabet)
+    return out
 
 
 class TravelAgent(Agent):
@@ -181,6 +212,136 @@ class TravelAgent(Agent):
         return "Shown on screen. Say one short line only — do not read it aloud."
 
     @function_tool()
+    async def show_experiences(self, context: RunContext, destination: str) -> str:
+        """Show a carousel of things to do / activities for a destination.
+
+        Uses the same card carousel as hotels. Each card's "View details" opens
+        the detail view (show_details).
+
+        Args:
+            destination: City or place, e.g. "Kolkata".
+        """
+        await publish_json(
+            context.session.room_io.room, EXPERIENCES_TOPIC, td.experiences_for(destination)
+        )
+        return "Shown on screen. Say one short line only — do not read it aloud."
+
+    @function_tool()
+    async def show_food(self, context: RunContext, destination: str) -> str:
+        """Show a carousel of restaurants / where to eat for a destination.
+
+        Uses the same card carousel as hotels. Each card's "View details" opens
+        the detail view (show_details).
+
+        Args:
+            destination: City or place, e.g. "Kolkata".
+        """
+        await publish_json(
+            context.session.room_io.room, FOOD_TOPIC, td.food_for(destination)
+        )
+        return "Shown on screen. Say one short line only — do not read it aloud."
+
+    @function_tool()
+    async def show_details(self, context: RunContext, name: str) -> str:
+        """Show a full detail view (image gallery + description + facts) for one
+        hotel, restaurant or experience.
+
+        Call this for "show me more details / tell me more about X" — it shows a
+        richer view than the card list, with multiple photos.
+
+        Args:
+            name: The item to detail, e.g. "Taj Bengal" or "Victoria Memorial Tour".
+        """
+        await publish_json(
+            context.session.room_io.room, DETAIL_TOPIC, td.details_for(name)
+        )
+        return "Shown on screen. Say one short line only — do not read it aloud."
+
+    @function_tool()
+    async def show_itinerary(self, context: RunContext, destination: str) -> str:
+        """Show a day-by-day trip itinerary for a destination.
+
+        Args:
+            destination: City or place, e.g. "Kolkata".
+        """
+        lang = ob.itinerary_lang(td.itinerary_for(destination))
+        await publish_lang(context.session.room_io.room, lang, "itinerary")
+        return "Shown on screen. Say one short line only — do not read it aloud."
+
+    @function_tool()
+    async def show_budget(self, context: RunContext, destination: str) -> str:
+        """Show an estimated trip cost breakdown + fare trend for a destination.
+
+        Args:
+            destination: City or place, e.g. "Kolkata".
+        """
+        lang = ob.budget_lang(destination, td.budget_for(destination))
+        await publish_lang(context.session.room_io.room, lang, "budget")
+        return "Shown on screen. Say one short line only — do not read it aloud."
+
+    @function_tool()
+    async def show_visa(self, context: RunContext, destination: str) -> str:
+        """Show entry / visa requirements for a destination.
+
+        Args:
+            destination: City or place, e.g. "Kolkata".
+        """
+        lang = ob.visa_lang(destination, td.visa_for(destination))
+        await publish_lang(context.session.room_io.room, lang, "visa")
+        return "Shown on screen. Say one short line only — do not read it aloud."
+
+    @function_tool()
+    async def confirm_booking(
+        self,
+        context: RunContext,
+        item: str,
+        kind: Literal["flight", "hotel", "experience"],
+        when: str,
+        price: str,
+        seat: str = "",
+        ticket_url: str = "",
+    ) -> str:
+        """Render a booking confirmation / e-ticket card after a "Book …" request.
+
+        Call this once you have confirmed the booking details. Generates a PNR
+        and pins the confirmation card (with e-ticket link) on the screen.
+
+        Args:
+            item: What was booked, self-sufficient, e.g. "IndiGo 6E 2041, Delhi
+                to Kolkata 06:20" or "Taj Bengal, Alipore".
+            kind: "flight", "hotel" or "experience".
+            when: Date/time, e.g. "Fri 24 May · 06:20 DEL → 08:45 CCU".
+            price: Total paid, e.g. "₹5,600".
+            seat: Optional seat/room detail, e.g. "Seat 14A · Window".
+            ticket_url: Optional e-ticket URL; a demo link is generated if empty.
+        """
+        pnr = _pnr(f"{item}|{when}")
+        headline = {
+            "flight": "You're all set to fly!",
+            "hotel": "Your stay is booked!",
+            "experience": "Your booking is confirmed!",
+        }[kind]
+        details = [{"label": "When", "value": when}]
+        if seat:
+            details.insert(0, {"label": "Room" if kind == "hotel" else "Seat", "value": seat})
+        details.append({"label": "Total paid", "value": price})
+        payload = {
+            "kind": kind,
+            "title": f"{kind.capitalize()} Booking Confirmation",
+            "status": "Booking confirmed",
+            "reference": f"PNR {pnr}",
+            "headline": headline,
+            "subhead": item,
+            "details": details,
+            "actions": [
+                {"label": "View e-ticket", "url": ticket_url or f"https://makemytrip.com/booking/{pnr}", "variant": "primary"},
+                {"label": "Add to calendar", "action": f"Add {item} to my calendar", "variant": "secondary"},
+            ],
+        }
+        await publish_json(context.session.room_io.room, BOOKING_TOPIC, payload)
+        return f"Booked. PNR {pnr}. Say one short line only — do not read it aloud."
+
+    @function_tool()
     async def set_trip_summary(
         self,
         context: RunContext,
@@ -189,12 +350,13 @@ class TravelAgent(Agent):
         duration: str,
         travelers: str,
         budget: str,
+        full_plan_action: str = "",
     ) -> str:
         """Pin or update the trip summary card in the user's side panel.
 
-        Call this as soon as you know the trip's shape, and again whenever any
-        detail changes. The panel also shows live weather for `destination`, so
-        keep it a clean city/place name (e.g. "Kolkata"). Use short human values.
+        Call this as soon as you know the destination — it also drives the live
+        Weather card, so send it early and keep `destination` a clean city name
+        (e.g. "Kolkata"). Update whenever any detail changes. Short human values.
 
         Args:
             destination: City or place, e.g. "Kolkata".
@@ -202,18 +364,19 @@ class TravelAgent(Agent):
             duration: e.g. "2 nights / 3 days".
             travelers: e.g. "2 adults".
             budget: Estimated budget range, e.g. "₹28,000 – ₹32,000".
+            full_plan_action: Optional message the "View Full Plan →" button
+                sends, e.g. "Show me the full trip plan for Kolkata".
         """
-        await publish_json(
-            context.session.room_io.room,
-            "trip.summary",
-            {
-                "destination": destination,
-                "dates": dates,
-                "duration": duration,
-                "travelers": travelers,
-                "budget": budget,
-            },
-        )
+        payload = {
+            "destination": destination,
+            "dates": dates,
+            "duration": duration,
+            "travelers": travelers,
+            "budget": budget,
+        }
+        if full_plan_action:
+            payload["fullPlanAction"] = full_plan_action
+        await publish_json(context.session.room_io.room, "trip.summary", payload)
         return "Trip summary updated on screen."
 
 
