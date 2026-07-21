@@ -25,6 +25,7 @@ from livekit.plugins import openai, sarvam
 
 from app.agent.instructions import build_instructions
 from app.agent.openui_render import stream_openui
+from app.agent.travel_data import flights_for, hero_for, hotels_for
 from app.core.config import AGENT_DISPATCH_NAME
 
 logger = logging.getLogger("agent")
@@ -37,6 +38,14 @@ server = AgentServer()
 # Kept off the reserved "lk.transcription" topic so the live transcript is
 # unaffected.
 UI_TOPIC = "ui.render"
+
+# Typed-JSON topics rendered by the frontend's purpose-built native components
+# (HeroCard / HotelsSection / FlightsSection). Hotels, flights and the
+# destination hero go here — NOT through openui-lang. Shapes are the frontend
+# contract in makemytrip_frontend/src/lib/streamTypes.ts.
+HERO_TOPIC = "trip.hero"
+HOTELS_TOPIC = "hotels.list"
+FLIGHTS_TOPIC = "flights.list"
 
 # Sarvam STT `prompt` (saaras:v3): domain-specific hint that biases the
 # recognizer toward banking vocabulary and preserves proper nouns. Transcribes
@@ -64,6 +73,15 @@ async def stream_ui_text(
     await writer.aclose()
 
 
+async def publish_json(room, topic: str, payload: dict) -> None:
+    """Send one JSON snapshot on a topic (snapshot semantics: replaces prior)."""
+
+    async def _one():
+        yield json.dumps(payload, ensure_ascii=False)
+
+    await stream_ui_text(room, _one(), topic=topic)
+
+
 class TravelAgent(Agent):
     def __init__(self, instructions: str) -> None:
         super().__init__(instructions=instructions)
@@ -74,9 +92,6 @@ class TravelAgent(Agent):
         context: RunContext,
         request: str,
         tab: Literal[
-            "overview",
-            "hotels",
-            "flights",
             "experiences",
             "food",
             "itinerary",
@@ -87,31 +102,81 @@ class TravelAgent(Agent):
     ) -> str:
         """Display rich visual content on the user's screen.
 
-        Use when results are best shown visually (flight/hotel search results,
-        booking confirmations and e-tickets, trip itineraries, comparisons)
-        rather than read aloud. A dedicated UI author turns your description
-        into the visual — you do not write any markup.
+        Use for experiences, food, itineraries, budgets, visa info, and booking
+        confirmations/e-tickets — anything best shown rather than read aloud. A
+        dedicated UI author turns your description into the visual; you write no
+        markup. NOTE: hotels, flights and destination overviews have their own
+        dedicated tools (show_hotels / show_flights / show_hero) — use those,
+        not this, for those result types.
 
         Args:
             request: A complete natural-language description of what to show,
-                INCLUDING every concrete data point (airline names, times,
-                prices, hotel names, PNR, seat, e-ticket/checkout URLs). For
-                booking buttons, say what each button should do (e.g. "a Book
-                button for IndiGo 6E-231 at 06:10"). Be exhaustive — the author
-                only has what you write here.
-            tab: Which dashboard tab this render belongs under. Pick the closest:
-                "hotels" for stays, "flights" for flight lists/bookings,
-                "experiences" for activities/tours, "food" for restaurants,
-                "itinerary" for day-by-day plans, "budget" for cost breakdowns,
-                "visa" for visa/entry info, "overview" for anything else or a
-                trip summary.
-            title: Short human label for the panel, e.g. "Hotels in Kolkata" or
-                "Delhi → Goa flights". Shown above the render.
+                INCLUDING every concrete data point (names, times, prices, PNR,
+                seat, e-ticket/checkout URLs). For booking buttons, say what
+                each button should do (e.g. "a Book button for IndiGo 6E-231 at
+                06:10"). Be exhaustive — the author only has what you write here.
+            tab: Which dashboard tab this render belongs under: "experiences"
+                for activities/tours, "food" for restaurants, "itinerary" for
+                day-by-day plans, "budget" for cost breakdowns, "visa" for
+                visa/entry info.
+            title: Short human label for the panel, e.g. "3 days in Kolkata".
+                Shown above the render.
         """
         await stream_ui_text(
             context.session.room_io.room,
             stream_openui(request),
             attributes={"tab": tab, "title": title},
+        )
+        return "Shown on screen. Say one short line only — do not read it aloud."
+
+    @function_tool()
+    async def show_hotels(self, context: RunContext, destination: str) -> str:
+        """Show the hotels carousel for a destination on the user's screen.
+
+        Use this for ANY "show/find hotels", "where to stay", or hotel-results
+        request — not render_ui. Renders the native Hotels tab.
+
+        Args:
+            destination: City or place, e.g. "Kolkata".
+        """
+        await publish_json(
+            context.session.room_io.room, HOTELS_TOPIC, hotels_for(destination)
+        )
+        return "Shown on screen. Say one short line only — do not read it aloud."
+
+    @function_tool()
+    async def show_flights(
+        self, context: RunContext, origin: str, destination: str, date: str = ""
+    ) -> str:
+        """Show the flights list for a route on the user's screen.
+
+        Use this for ANY flight-search or flight-results request — not
+        render_ui. Renders the native Flights tab.
+
+        Args:
+            origin: Departure city, e.g. "Delhi".
+            destination: Arrival city, e.g. "Kolkata".
+            date: Optional travel date, e.g. "24 May".
+        """
+        await publish_json(
+            context.session.room_io.room,
+            FLIGHTS_TOPIC,
+            flights_for(origin, destination, date or None),
+        )
+        return "Shown on screen. Say one short line only — do not read it aloud."
+
+    @function_tool()
+    async def show_hero(self, context: RunContext, destination: str) -> str:
+        """Show the destination overview hero (banner + at-a-glance stats).
+
+        Call when the user picks a place, before drilling into hotels/flights.
+        Renders the native Overview tab and drives the side-panel live weather.
+
+        Args:
+            destination: City or place, e.g. "Kolkata".
+        """
+        await publish_json(
+            context.session.room_io.room, HERO_TOPIC, hero_for(destination)
         )
         return "Shown on screen. Say one short line only — do not read it aloud."
 
@@ -138,21 +203,16 @@ class TravelAgent(Agent):
             travelers: e.g. "2 adults".
             budget: Estimated budget range, e.g. "₹28,000 – ₹32,000".
         """
-        payload = json.dumps(
+        await publish_json(
+            context.session.room_io.room,
+            "trip.summary",
             {
                 "destination": destination,
                 "dates": dates,
                 "duration": duration,
                 "travelers": travelers,
                 "budget": budget,
-            }
-        )
-
-        async def _one():
-            yield payload
-
-        await stream_ui_text(
-            context.session.room_io.room, _one(), topic="trip.summary"
+            },
         )
         return "Trip summary updated on screen."
 

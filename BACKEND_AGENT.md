@@ -39,7 +39,10 @@ Response (envelope; flat `{token,url}` also accepted):
 | agent → user | audio track | — | spoken replies (agent greets first) |
 | both | `lk.transcription` | reserved | live captions (LiveKit-managed, do not write) |
 | user → agent | `lk.chat` | text | typed messages **and booking actions** (see §4) |
-| agent → user | `ui.render` | raw openui-lang text | a result panel to display |
+| agent → user | `trip.hero` | JSON | destination overview banner + stat chips (Overview tab) |
+| agent → user | `hotels.list` | JSON | hotel results (native Hotels carousel) |
+| agent → user | `flights.list` | JSON | flight results (native Flights list) |
+| agent → user | `ui.render` | raw openui-lang text | a result panel for everything else |
 | agent → user | `trip.summary` | JSON | pins the trip summary card in the side panel |
 
 `ui.render` streams carry two **attributes** the dashboard uses:
@@ -61,7 +64,62 @@ Rules:
 
 ---
 
-## 3. openui-lang the agent emits
+## 2a. Typed-JSON topics — hotels, flights, hero (PREFERRED for these)
+
+Hotels, flights, and the destination overview render through the frontend's
+**purpose-built native components** — do NOT send them as openui-lang. Send one
+JSON snapshot per topic (a re-send replaces the previous). Shapes match
+`makemytrip_frontend/src/lib/streamTypes.ts`. The backend builds these in
+`app/agent/travel_data.py` and streams them via the `show_hotels`,
+`show_flights`, and `show_hero` tools. Use openui-lang (§3) only for the tabs
+with no native component: experiences, food, itinerary, budget, visa, booking
+confirmations.
+
+`hotels.list`:
+```json
+{ "title": "Top Hotels for You", "destination": "Kolkata",
+  "viewAllAction": "Show me all hotel options in Kolkata",
+  "hotels": [
+    { "id": "taj-bengal", "name": "Taj Bengal",
+      "image": { "src": "https://…", "alt": "Taj Bengal" },
+      "badge": "Popular", "rating": 4.7, "reviews": 2312,
+      "location": "Alipore, Kolkata",
+      "amenities": ["Breakfast incl.", "Free cancellation"],
+      "price": "₹8,900", "priceUnit": "/ night",
+      "action": "Show me rooms at Taj Bengal, Alipore, Kolkata" }
+  ] }
+```
+
+`flights.list`:
+```json
+{ "title": "Recommended Flights",
+  "viewAllAction": "Show me all flights from Delhi to Kolkata",
+  "flights": [
+    { "id": "6e-2041", "airline": "IndiGo", "flightNo": "6E 2041",
+      "depart": { "time": "06:20", "code": "DEL" },
+      "arrive": { "time": "08:45", "code": "CCU" },
+      "duration": "2h 25m", "stops": "Non-stop", "price": "₹5,600",
+      "tag": "Lowest fare",
+      "action": "Book IndiGo 6E 2041, Delhi to Kolkata, departing 06:20" }
+  ] }
+```
+
+`trip.hero`:
+```json
+{ "destination": "Kolkata", "region": "West Bengal, India",
+  "image": { "src": "https://…", "alt": "Kolkata skyline" },
+  "stats": [ { "icon": "sun", "label": "Good Weather", "value": "28°C" } ],
+  "related": ["Best time to visit Kolkata", "3-day Kolkata itinerary"] }
+```
+
+`action` strings behave exactly like openui-lang `@ToAssistant` (§4): clicking a
+card sends the string back on `lk.chat`. Keep them self-sufficient. Use real,
+HTTPS, hotlinkable image URLs — the native card falls back to an icon on a
+broken image.
+
+---
+
+## 3. openui-lang the agent emits (everything else)
 
 Line-oriented, assignment-based. `root` must be a `Card`. Positional args, one
 statement per line. Below are the core travel patterns — copy the shapes.
