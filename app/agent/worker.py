@@ -206,7 +206,11 @@ class TravelAgent(Agent):
                 "visa": entry / visa requirements.
             destination: Clean city name, e.g. "Kolkata".
         """
-        await _SHOW[kind](context.session.room_io.room, destination)
+        room = context.session.room_io.room
+        # Summary/overview hero ALWAYS fires — even for hotels/food/etc.
+        if kind != "overview":
+            await _SHOW["overview"](room, destination)
+        await _SHOW[kind](room, destination)
         return "Shown on screen. Say one short line only — do not read it aloud."
 
     @function_tool()
