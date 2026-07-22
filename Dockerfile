@@ -19,4 +19,5 @@ WORKDIR /app
 COPY --from=builder /app /app
 ENV PATH="/app/.venv/bin:$PATH"
 EXPOSE 8000
-ENTRYPOINT ["/app/docker-entrypoint.sh"]
+# Default = API; the agent service overrides `command` in docker-compose.yml.
+CMD ["python", "server_run.py"]

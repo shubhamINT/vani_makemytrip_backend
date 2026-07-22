@@ -1,23 +1,22 @@
 #!/bin/bash
+set -euo pipefail  # exit on error, unset var, or failed pipe
 
-# Exit on error
-set -e
-
-echo "🚀 Starting deployment..."
-
-# Check if .env file exists
-if [ ! -f .env ]; then
-    echo "❌ .env file not found! Please create one based on .env.example"
+# Check if env is present
+if [ ! -f ".env" ]; then
+    echo "Error: .env file is not present"
     exit 1
 fi
 
-echo "Git pulling latest changes..."
+# Update the code from git (repo default branch is master, not main)
+echo "Pulling latest code..."
 git pull origin master
 
-echo "📦 Building and starting containers..."
-PORT=3011 docker compose up -d --build
+# Build and run; --wait blocks until the healthcheck passes
+echo "Building and starting services..."
+docker compose up -d --build --wait
 
-echo "🧹 Cleaning up docker..."
-docker system prune -a -f
+# Cleanup dangling images/build cache (does not touch volumes)
+echo "Cleaning up..."
+docker image prune -f
 
-echo "✅ Deployment successful!"
+echo "Deployment completed successfully."

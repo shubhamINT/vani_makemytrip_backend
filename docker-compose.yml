@@ -1,9 +1,28 @@
 services:
-  backend:
+  api:
     build: .
     image: makemytrip-agent-backend:latest
-    container_name: makemytrip-backend
-    env_file: .env
+    container_name: makemytrip-api
+    env_file:
+      - .env
     ports:
       - "${PORT:-8000}:${PORT:-8000}"   # host port from env; server_run.py binds $PORT inside
     restart: unless-stopped
+    command: python server_run.py
+    healthcheck:
+      # python is in the image; no curl needed. Makes `up --wait` meaningful.
+      test: ["CMD", "python", "-c", "import os,urllib.request; urllib.request.urlopen('http://127.0.0.1:'+os.getenv('PORT','8000')+'/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  agent:
+    image: makemytrip-agent-backend:latest   # reuses the image api builds
+    container_name: makemytrip-agent
+    env_file:
+      - .env
+    restart: unless-stopped
+    command: python -m app.agent start
+    depends_on:
+      - api
