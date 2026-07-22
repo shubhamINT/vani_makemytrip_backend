@@ -28,7 +28,7 @@ from app.agent import openui_build as ob
 from app.agent import travel_data as td
 from app.agent.instructions import build_instructions
 from app.agent.openui_render import stream_openui
-from app.agent.travel_data import flights_for, hero_for, hotels_for
+from app.agent.travel_data import flights_for
 from app.core.config import AGENT_DISPATCH_NAME
 
 logger = logging.getLogger("agent")
@@ -102,6 +102,20 @@ async def publish_lang(room, lang: str, tab: str) -> None:
     await stream_ui_text(room, _one(), attributes={"tab": tab, "title": ""})
 
 
+# Dispatch registry for the generic `show` tool: kind -> async fn(room, dest).
+# Reuses publish_json / publish_lang + travel_data + openui_build — adding a new
+# kind of screen is one row here, not a new @function_tool.
+_SHOW = {
+    "overview":    lambda room, d: publish_json(room, HERO_TOPIC,        td.hero_for(d)),
+    "hotels":      lambda room, d: publish_json(room, HOTELS_TOPIC,      td.hotels_for(d)),
+    "experiences": lambda room, d: publish_json(room, EXPERIENCES_TOPIC, td.experiences_for(d)),
+    "food":        lambda room, d: publish_json(room, FOOD_TOPIC,        td.food_for(d)),
+    "itinerary":   lambda room, d: publish_lang(room, ob.itinerary_lang(td.itinerary_for(d)), "itinerary"),
+    "budget":      lambda room, d: publish_lang(room, ob.budget_lang(d, td.budget_for(d)), "budget"),
+    "visa":        lambda room, d: publish_lang(room, ob.visa_lang(d, td.visa_for(d)), "visa"),
+}
+
+
 def _pnr(seed: str) -> str:
     """Stable, PNR-looking 6-char code from a seed (deterministic per booking)."""
     alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ0123456789"
@@ -131,14 +145,14 @@ class TravelAgent(Agent):
         ],
         title: str,
     ) -> str:
-        """Display rich visual content on the user's screen.
+        """Display rich visual content on the user's screen — FALLBACK ONLY.
 
-        Use for experiences, food, itineraries, budgets, visa info, and booking
-        confirmations/e-tickets — anything best shown rather than read aloud. A
-        dedicated UI author turns your description into the visual; you write no
-        markup. NOTE: hotels, flights and destination overviews have their own
-        dedicated tools (show_hotels / show_flights / show_hero) — use those,
-        not this, for those result types.
+        Use only for something the dedicated tools don't cover, best shown
+        rather than read aloud. A dedicated UI author turns your description
+        into the visual; you write no markup. NOTE: overview/hotels/experiences/
+        food/itinerary/budget/visa go through show(kind, destination); flights
+        through show_flights; item details through show_details; bookings
+        through confirm_booking — use those, not this, for those result types.
 
         Args:
             request: A complete natural-language description of what to show,
@@ -161,18 +175,38 @@ class TravelAgent(Agent):
         return "Shown on screen. Say one short line only — do not read it aloud."
 
     @function_tool()
-    async def show_hotels(self, context: RunContext, destination: str) -> str:
-        """Show the hotels carousel for a destination on the user's screen.
+    async def show(
+        self,
+        context: RunContext,
+        kind: Literal[
+            "overview",
+            "hotels",
+            "experiences",
+            "food",
+            "itinerary",
+            "budget",
+            "visa",
+        ],
+        destination: str,
+    ) -> str:
+        """Show trip content for a destination on the user's screen.
 
-        Use this for ANY "show/find hotels", "where to stay", or hotel-results
-        request — not render_ui. Renders the native Hotels tab.
+        The one tool for destination-keyed screens — prefer it over render_ui.
+        Flights, item details, and bookings have their own tools.
 
         Args:
-            destination: City or place, e.g. "Kolkata".
+            kind: What to show —
+                "overview": destination hero/at-a-glance (call when a place is
+                    picked, before drilling in — also drives live weather),
+                "hotels": where to stay,
+                "experiences": things to do / activities / sightseeing,
+                "food": restaurants / where to eat,
+                "itinerary": day-by-day plan,
+                "budget": estimated cost breakdown,
+                "visa": entry / visa requirements.
+            destination: Clean city name, e.g. "Kolkata".
         """
-        await publish_json(
-            context.session.room_io.room, HOTELS_TOPIC, hotels_for(destination)
-        )
+        await _SHOW[kind](context.session.room_io.room, destination)
         return "Shown on screen. Say one short line only — do not read it aloud."
 
     @function_tool()
@@ -197,51 +231,6 @@ class TravelAgent(Agent):
         return "Shown on screen. Say one short line only — do not read it aloud."
 
     @function_tool()
-    async def show_hero(self, context: RunContext, destination: str) -> str:
-        """Show the destination overview hero (banner + at-a-glance stats).
-
-        Call when the user picks a place, before drilling into hotels/flights.
-        Renders the native Overview tab and drives the side-panel live weather.
-
-        Args:
-            destination: City or place, e.g. "Kolkata".
-        """
-        await publish_json(
-            context.session.room_io.room, HERO_TOPIC, hero_for(destination)
-        )
-        return "Shown on screen. Say one short line only — do not read it aloud."
-
-    @function_tool()
-    async def show_experiences(self, context: RunContext, destination: str) -> str:
-        """Show a carousel of things to do / activities for a destination.
-
-        Uses the same card carousel as hotels. Each card's "View details" opens
-        the detail view (show_details).
-
-        Args:
-            destination: City or place, e.g. "Kolkata".
-        """
-        await publish_json(
-            context.session.room_io.room, EXPERIENCES_TOPIC, td.experiences_for(destination)
-        )
-        return "Shown on screen. Say one short line only — do not read it aloud."
-
-    @function_tool()
-    async def show_food(self, context: RunContext, destination: str) -> str:
-        """Show a carousel of restaurants / where to eat for a destination.
-
-        Uses the same card carousel as hotels. Each card's "View details" opens
-        the detail view (show_details).
-
-        Args:
-            destination: City or place, e.g. "Kolkata".
-        """
-        await publish_json(
-            context.session.room_io.room, FOOD_TOPIC, td.food_for(destination)
-        )
-        return "Shown on screen. Say one short line only — do not read it aloud."
-
-    @function_tool()
     async def show_details(self, context: RunContext, name: str) -> str:
         """Show a full detail view (image gallery + description + facts) for one
         hotel, restaurant or experience.
@@ -255,39 +244,6 @@ class TravelAgent(Agent):
         await publish_json(
             context.session.room_io.room, DETAIL_TOPIC, td.details_for(name)
         )
-        return "Shown on screen. Say one short line only — do not read it aloud."
-
-    @function_tool()
-    async def show_itinerary(self, context: RunContext, destination: str) -> str:
-        """Show a day-by-day trip itinerary for a destination.
-
-        Args:
-            destination: City or place, e.g. "Kolkata".
-        """
-        lang = ob.itinerary_lang(td.itinerary_for(destination))
-        await publish_lang(context.session.room_io.room, lang, "itinerary")
-        return "Shown on screen. Say one short line only — do not read it aloud."
-
-    @function_tool()
-    async def show_budget(self, context: RunContext, destination: str) -> str:
-        """Show an estimated trip cost breakdown + fare trend for a destination.
-
-        Args:
-            destination: City or place, e.g. "Kolkata".
-        """
-        lang = ob.budget_lang(destination, td.budget_for(destination))
-        await publish_lang(context.session.room_io.room, lang, "budget")
-        return "Shown on screen. Say one short line only — do not read it aloud."
-
-    @function_tool()
-    async def show_visa(self, context: RunContext, destination: str) -> str:
-        """Show entry / visa requirements for a destination.
-
-        Args:
-            destination: City or place, e.g. "Kolkata".
-        """
-        lang = ob.visa_lang(destination, td.visa_for(destination))
-        await publish_lang(context.session.room_io.room, lang, "visa")
         return "Shown on screen. Say one short line only — do not read it aloud."
 
     @function_tool()
@@ -410,10 +366,12 @@ async def entrypoint(ctx: JobContext) -> None:
             num_initial_ignored_frames=4,
         ),
         llm=openai.LLM(
-            model="gpt-4o-mini",
-            parallel_tool_calls=False,  # serialize tool calls; avoids racing UI packets
+            model="gpt-5.4-mini",
+            # Fire tools together in one turn (e.g. show + set_trip_summary).
+            # Safe: each tool writes its own topic, so concurrent writes don't race.
+            parallel_tool_calls=True,
         ),
-        tts=sarvam.TTS(model="bulbul:v3", target_language_code="en-IN"),
+        tts=sarvam.TTS(model="bulbul:v3", target_language_code="en-IN", speaker = 'simran'),
         use_tts_aligned_transcript=True,
         turn_handling=TurnHandlingOptions(
             # v1-mini runs the bundled local model (no cloud inference gateway);

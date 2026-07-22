@@ -13,10 +13,9 @@ generated-but-resolving data so an off-script city still looks fine.
 # bodies for a real search API when one exists; the return shapes are the
 # frontend / openui_build contract and must not change.
 
-Images: hotels use exact URLs where supplied; everything else uses loremflickr
-keyword photos (real, topical, HTTPS, hotlinkable, deterministic via /lock so
-they don't flicker between renders). Replace any `src` with an exact URL to
-hand-pick a specific photo.
+Images: all cards/hotels/heroes pull from the shared `_POOL` of real HTTPS URLs,
+rotating deterministically by index so they don't flicker between renders. Add
+URLs to `_POOL` to widen the rotation.
 """
 
 import re
@@ -36,15 +35,24 @@ def _code(city: str) -> str:
 
 
 def _flickr(keywords: str, lock: int, w: int = 640, h: int = 480) -> str:
-    """Real topical photo by keyword, stable per lock number."""
-    kw = re.sub(r"[^a-z0-9,]+", "", keywords.lower().replace(" ", ""))
-    return f"https://loremflickr.com/{w}/{h}/{kw}/lock/{lock}"
+    """Deterministic photo from the shared pool, stable per lock number.
+
+    # ponytail: keywords/size ignored — loremflickr didn't render reliably, so
+    # every call now maps to a real pool URL (rotates by lock). Kept the name +
+    # signature so existing call sites don't change.
+    """
+    return _pool(lock)
 
 
 # Shared pool of real photos (user-supplied), used interchangeably across cards,
 # detail galleries and hero banners. Deterministic assignment by index so the
 # same item always gets the same photo.
 _POOL = [
+    "https://www.cvent.com/sites/default/files/image/2021-01/iStock-537361842-2.jpg",
+    "https://cf.bstatic.com/xdata/images/hotel/max1024x768/528067594.jpg?k=aaacb3bf5a62eadded59f90083a40ef39103e3f9cc7fb72acc425d0de07ae1f7&o=",
+    "https://assets.architecturaldigest.in/photos/69ba8a4abedec0d050a54777/16:9/w_1616,h_909,c_limit/Untitled%20design%20-%202026-03-18T163237.899.jpg",
+    "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSmnZfK4KI09VeTieeItIKRVko46gOsgO-S5gvzsa6fcSkVP_fWRdIa0PcU&s=10",
+    "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQ3yse4VQSJUw6pZkiABjbLGba0LMpxXjb4ZZxkH47F0wXDERTJbZoQeTA&s=10",
     "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSu9LVQLESflmRTl9YLRHt9R9cV4h3wjHKQhEvqyu5iBrmopG0VpXzcKOWc&s=10",
     "https://cf-images.assettype.com/TNIE%2Fimport%2Fuploads%2Fuser%2Fckeditor_images%2Farticle%2F2020%2F2%2F20%2Fdfdjjj1.jpg?w=640&auto=format%2Ccompress",
     "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSWf65AYMvbslSvkltg83jTzkKAux65lDS5vZd0GqR3-68oBG7GI4s_N9sZ&s=10",
@@ -289,7 +297,11 @@ def hotels_for(destination: str) -> dict:
     view_all = f"Show me all hotel options in {destination}"
     c = _city(destination)
     if c:
-        hotels = [{**h, "action": f"Book {h['name']}, {h['location']}"} for h in c["hotels"]]
+        hotels = [
+            {**h, "image": {"src": _pool(i), "alt": h["name"]},
+             "action": f"Book {h['name']}, {h['location']}"}
+            for i, h in enumerate(c["hotels"])
+        ]
         return {"title": "Top Hotels for You", "destination": c["hero"]["destination"],
                 "viewAllAction": view_all, "hotels": hotels}
     tiers = [("Grand", 4.6, 1820, "₹6,500", "Popular"), ("Regency", 4.5, 1340, "₹4,800", None),
@@ -298,7 +310,7 @@ def hotels_for(destination: str) -> dict:
     for i, (suffix, rating, reviews, price, badge) in enumerate(tiers):
         name = f"{destination} {suffix}"
         h = {"id": _slug(name), "name": name,
-             "image": {"src": _flickr(f"{destination},hotel", 90 + i), "alt": name},
+             "image": {"src": _pool(i), "alt": name},
              "rating": rating, "reviews": reviews, "location": f"Central {destination}",
              "amenities": ["Breakfast incl.", "Free cancellation"], "price": price,
              "priceUnit": "/ night", "action": f"Book {name}, {destination}"}
