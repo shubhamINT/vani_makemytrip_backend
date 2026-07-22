@@ -1,0 +1,9 @@
+services:
+  backend:
+    build: .
+    image: makemytrip-agent-backend:latest
+    container_name: makemytrip-backend
+    env_file: .env
+    ports:
+      - "${PORT:-8000}:${PORT:-8000}"   # host port from env; server_run.py binds $PORT inside
+    restart: unless-stopped
